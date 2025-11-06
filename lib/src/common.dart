@@ -140,6 +140,12 @@ class ConnectOption {
   ///protocol
   int? protocol;
 
+  /// Timeout for subscription confirmation (waiting for server -ERR response)
+  Duration subConfirmTimeout;
+
+  /// Timeout for authentication during handshake
+  Duration authenticationTimeout;
+
   ///construcure
   ConnectOption(
       {this.verbose = false,
@@ -154,10 +160,14 @@ class ConnectOption {
       this.lang = 'dart',
       this.version = '0.6.0',
       this.headers = true,
-      this.protocol = 1});
+      this.protocol = 1,
+      this.subConfirmTimeout = const Duration(seconds: 2),
+      this.authenticationTimeout = const Duration(seconds: 2)});
 
   ///constructure from json
-  ConnectOption.fromJson(Map<String, dynamic> json) {
+  ConnectOption.fromJson(Map<String, dynamic> json) 
+      : subConfirmTimeout = Duration(seconds: json['sub_confirm_timeout'] ?? 2),
+        authenticationTimeout = Duration(seconds: json['authentication_timeout'] ?? 2) {
     verbose = json['verbose'];
     pedantic = json['pedantic'];
     tlsRequired = json['tls_required'];

@@ -307,7 +307,6 @@ class Client {
             if (_channelStream.isClosed) return;
             _channelStream.add(event);
           }, onDone: () {
-            print('WebSocket connection closed by server (possibly auth failure)');
             if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
               _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
             }
@@ -369,7 +368,6 @@ class Client {
               _channelStream.add(event);
             }
           }, onDone: () {
-            print('TLS connection closed by server (possibly auth failure)');
             if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
               _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
             }
@@ -494,14 +492,14 @@ class Client {
             _setStatus(Status.disconnected);
           }
         } else {
-          // In non-verbose mode, wait up to 5 seconds for an error
+          // In non-verbose mode, wait up to authenticationTimeout for an error
           // If no error occurs, assume connection is successful
           try {
-            await _ackStream.stream.first.timeout(Duration(seconds: 5));
+            await _ackStream.stream.first.timeout(_connectOption.authenticationTimeout);
             // If we get here, an error was received
             _setStatus(Status.disconnected);
           } on TimeoutException {
-            // No error received within 5 seconds, assume success
+            // No error received within timeout, assume success
             _setStatus(Status.connected);
           }
         }
@@ -518,15 +516,34 @@ class Client {
         }
         break;
       case '-err':
-        if (data.toLowerCase().contains('auth') || 
-            data.toLowerCase().contains('authorization') ||
-            data.toLowerCase().contains('permission')) {
-          // If we're in handshake phase, fail the connect future
-          if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-            _connectCompleter.completeError(NatsException('Authentication failed: $data'));
-            return;
+        // If this error mentions a subscription permission, try to match it to
+        // a pending subscription and fail that subscription.
+        var lower = data.toLowerCase();
+        var handled = false;
+        _pendingSubsSubjects.forEach((sid, subj) {
+          if (!handled && lower.contains(subj.toLowerCase())) {
+            var comp = _pendingSubCompleters[sid];
+            if (comp != null && !comp.isCompleted) {
+              comp.completeError(NatsException('Permission Violation for Subscription: $data'));
+            }
+            _pendingSubCompleters.remove(sid);
+            _pendingSubsSubjects.remove(sid);
+            handled = true;
+          }
+        });
+
+        if (!handled) {
+          if (lower.contains('auth') ||
+              lower.contains('authorization') ||
+              lower.contains('permission')) {
+            // If we're in handshake phase, fail the connect future
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Authentication failed: $data'));
+              return;
+            }
           }
         }
+
         if (_connectOption.verbose == true) {
           _ackStream.sink.add(false);
         }
@@ -535,7 +552,6 @@ class Client {
         _pingCompleter.complete();
         break;
       case '+ok':
-        print('server +OK');
         //do nothing
         if (_connectOption.verbose == true) {
           _ackStream.sink.add(true);
@@ -700,25 +716,57 @@ class Client {
   // }
 
   ///subscribe to subject option with queuegroup
-  Subscription<T> sub<T>(
+  Future<Subscription<T>> sub<T>(
     String subject, {
     String? queueGroup,
     T Function(String)? jsonDecoder,
-  }) {
+  }) async {
     _ssid++;
+    var sid = _ssid;
 
     //get registered json decoder
     if (T != dynamic && jsonDecoder == null) {
       jsonDecoder = _getJsonDecoder();
     }
 
-    var s = Subscription<T>(_ssid, subject, this,
+    var s = Subscription<T>(sid, subject, this,
         queueGroup: queueGroup, jsonDecoder: jsonDecoder);
-    _subs[_ssid] = s;
+
+    // If we're connected, send sub and wait for an error response that
+    // indicates a permission violation. If such an error arrives we fail
+    // the subscription. If no error arrives within timeout, assume success.
     if (status == Status.connected) {
-      _sub(subject, _ssid, queueGroup: queueGroup);
-      _backendSubs[_ssid] = true;
+      // register pending
+      var comp = Completer<Subscription<T>>();
+      _pendingSubCompleters[sid] = comp;
+      _pendingSubsSubjects[sid] = subject;
+
+      _sub(subject, sid, queueGroup: queueGroup);
+
+      try {
+        // Wait briefly for a possible -ERR from server regarding permissions
+        await comp.future.timeout(_connectOption.subConfirmTimeout);
+        // completed successfully (shouldn't happen normally), treat as accepted
+      } on TimeoutException {
+        // No error observed within timeout — assume subscription accepted
+      } catch (e) {
+        // Server responded with an error -> fail
+        _pendingSubCompleters.remove(sid);
+        _pendingSubsSubjects.remove(sid);
+        throw e;
+      }
+
+      // finalize subscription locally
+      _subs[sid] = s;
+      _backendSubs[sid] = true;
+      _pendingSubCompleters.remove(sid);
+      _pendingSubsSubjects.remove(sid);
+      return s;
     }
+
+    // If not connected yet, register locally; server subscription will be
+    // sent when connection is established by _backendSubscriptAll
+    _subs[sid] = s;
     return s;
   }
 
@@ -812,6 +860,10 @@ class Client {
   String? _inboxSubPrefix;
   Subscription? _inboxSub;
 
+  // Track pending subscriptions (waiting for server -ERR response)
+  final _pendingSubCompleters = <int, Completer>{};
+  final _pendingSubsSubjects = <int, String>{};
+
   /// Request will send a request payload and deliver the response message,
   /// TimeoutException on timeout.
   ///
@@ -847,7 +899,7 @@ class Client {
       } else {
         _inboxSubPrefix = inboxPrefix;
       }
-      _inboxSub = sub<T>(_inboxSubPrefix! + '.>', jsonDecoder: jsonDecoder);
+  _inboxSub = await sub<T>(_inboxSubPrefix! + '.>', jsonDecoder: jsonDecoder);
     }
     var inbox = _inboxSubPrefix! + '.' + Nuid().next();
     var stream = _inboxSub!.stream;
@@ -915,6 +967,14 @@ class Client {
     _inboxSub = null;
     _inboxSubPrefix = null;
     _buffer = [];
+    // Fail any pending subscription completers to avoid hanging futures
+    _pendingSubCompleters.forEach((sid, comp) {
+      if (!comp.isCompleted) {
+        comp.completeError(NatsException('Connection closed before subscription could be confirmed'));
+      }
+    });
+    _pendingSubCompleters.clear();
+    _pendingSubsSubjects.clear();
     _clientStatus = _ClientStatus.closed;
   }
 
