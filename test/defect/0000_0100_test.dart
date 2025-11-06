@@ -63,8 +63,9 @@ void main() {
         '0020 larger MSG payloads not always working, check if full payload present in buffer',
         () async {
       var client = Client();
-      unawaited(client.connect(Uri.parse('nats://localhost')));
-      var sub = client.sub('subject1');
+      unawaited(client.connect(Uri.parse('nats://localhost'),
+          connectOption: ConnectOption(verbose: true)));
+      var sub = await client.sub('subject1');
       var str21k = '';
       for (var i = 0; i < 21000; i++) {
         str21k += '${i % 10}';
@@ -76,9 +77,9 @@ void main() {
     });
     test('0022 Connection to nats with macos and mobile:', () async {
       var client = Client();
-      unawaited(
-          client.connect(Uri.parse('nats://demo.nats.io'), retryInterval: 1));
-      var sub = client.sub('subject1');
+      unawaited(client.connect(Uri.parse('nats://demo.nats.io'),
+          retryInterval: 1, connectOption: ConnectOption(verbose: true)));
+      var sub = await client.sub('subject1');
       client.pubString('subject1', 'message1');
       var msg = await sub.stream.first;
       await client.close();

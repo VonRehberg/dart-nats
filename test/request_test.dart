@@ -10,7 +10,7 @@ void main() {
     test('simple', () async {
       var client = Client();
       await client.connect(Uri.parse('ws://localhost:8080'), retryInterval: 1);
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       client.pub('subject1', Uint8List.fromList('message1'.codeUnits));
       var msg = await sub.stream.first;
       await client.close();
@@ -19,7 +19,7 @@ void main() {
     test('respond', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service = server.sub('service');
+      var service = await server.sub('service');
       service.stream.listen((m) {
         m.respondString('respond');
       });
@@ -27,7 +27,7 @@ void main() {
       var requester = Client();
       await requester.connect(Uri.parse('ws://localhost:8080'));
       var inbox = newInbox();
-      var inboxSub = requester.sub(inbox);
+      var inboxSub = await requester.sub(inbox);
 
       requester.pubString('service', 'request', replyTo: inbox);
 
@@ -40,7 +40,7 @@ void main() {
     test('request', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service = server.sub('service');
+      var service = await server.sub('service');
       unawaited(service.stream.first.then((m) {
         m.respond(Uint8List.fromList('respond'.codeUnits));
       }));
@@ -57,7 +57,7 @@ void main() {
     test('custom inbox', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service = server.sub('service');
+      var service = await server.sub('service');
       unawaited(service.stream.first.then((m) {
         m.respond(Uint8List.fromList('respond'.codeUnits));
       }));
@@ -75,7 +75,7 @@ void main() {
     test('request with timeout', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service = server.sub('service');
+      var service = await server.sub('service');
       unawaited(service.stream.first.then((m) {
         sleep(Duration(seconds: 1));
         m.respond(Uint8List.fromList('respond'.codeUnits));
@@ -94,7 +94,7 @@ void main() {
     test('request with timeout exception', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service = server.sub('service');
+      var service = await server.sub('service');
       unawaited(service.stream.first.then((m) {
         sleep(Duration(seconds: 5));
         m.respond(Uint8List.fromList('respond'.codeUnits));
@@ -117,11 +117,11 @@ void main() {
     test('future request to 2 service', () async {
       var server = Client();
       await server.connect(Uri.parse('ws://localhost:8080'));
-      var service1 = server.sub('service1');
+      var service1 = await server.sub('service1');
       service1.stream.listen((m) {
         m.respond(Uint8List.fromList('respond1'.codeUnits));
       });
-      var service2 = server.sub('service2');
+      var service2 = await server.sub('service2');
       service2.stream.listen((m) {
         m.respond(Uint8List.fromList('respond2'.codeUnits));
       });

@@ -10,9 +10,9 @@ void main() {
   group('all', () {
     test('ws', () async {
       var client = Client();
-      unawaited(
-          client.connect(Uri.parse('ws://localhost:8080'), retryInterval: 1));
-      var sub = client.sub('subject1');
+      unawaited(client.connect(Uri.parse('ws://localhost:8080'),
+          retryInterval: 1, connectOption: ConnectOption(verbose: true)));
+      var sub = await client.sub('subject1');
       await client.pub('subject1', Uint8List.fromList('message1'.codeUnits));
       var msg = await sub.stream.first;
       await client.close();
@@ -20,8 +20,9 @@ void main() {
     });
     test('await', () async {
       var client = Client();
-      await client.connect(Uri.parse('ws://localhost:8080'));
-      var sub = client.sub('subject1');
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(verbose: true));
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -33,8 +34,9 @@ void main() {
     });
     test('reconnect', () async {
       var client = Client();
-      await client.connect(Uri.parse('ws://localhost:8080'));
-      var sub = client.sub('subject1');
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(verbose: true));
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -44,7 +46,8 @@ void main() {
       await client.close();
       expect(String.fromCharCodes(msg.byte), equals('message1'));
 
-      await client.connect(Uri.parse('ws://localhost:8080'));
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(verbose: true));
       result = await client.pub(
           'subject1', Uint8List.fromList('message2'.codeUnits),
           buffer: false);
@@ -59,7 +62,8 @@ void main() {
         // print(s);
         statusHistory.add(s);
       });
-      await client.connect(Uri.parse('ws://localhost:8080'));
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(verbose: true));
       await client.close();
 
       // no runtime error should be fine

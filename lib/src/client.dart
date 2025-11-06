@@ -68,6 +68,12 @@ class Client {
   bool _tlsRequired = false;
   bool _retry = false;
 
+  // Connection parameters for automatic reconnection
+  Uri? _lastUri;
+  int _retryInterval = 10;
+  int _retryCount = 3;
+  int _timeout = 5;
+
   Info _info = Info();
   late Completer _pingCompleter;
   late Completer _connectCompleter;
@@ -203,8 +209,11 @@ class Client {
     SecurityContext? securityContext,
   }) async {
     this._retry = retry;
+    this._lastUri = uri;
+    this._retryInterval = retryInterval;
+    this._retryCount = retryCount;
+    this._timeout = timeout;
     this.securityContext = securityContext;
-    _connectCompleter = Completer();
     if (_clientStatus == _ClientStatus.used) {
       throw Exception(
           NatsException('client in use. must close before call connect'));
@@ -212,78 +221,87 @@ class Client {
     if (status != Status.disconnected && status != Status.closed) {
       return Future.error('Error: status not disconnected and not closed');
     }
+
+    // Reset client state for reconnection
+    if (_clientStatus == _ClientStatus.closed) {
+      // Ensure channel stream is recreated for fresh connection
+      _channelStream = StreamController();
+      _steamHandle();
+      // Reset any connection-related state
+      _buffer = [];
+      _pendingSubCompleters.clear();
+      _pendingSubsSubjects.clear();
+    }
+
     _clientStatus = _ClientStatus.used;
     if (connectOption != null) _connectOption = connectOption;
-    do {
-      _connectLoop(
-        uri,
-        timeout: timeout,
-        retryInterval: retryInterval,
-        retryCount: retryCount,
-      );
 
-      if (_clientStatus == _ClientStatus.closed || status == Status.closed) {
-        if (!_connectCompleter.isCompleted) {
-          _connectCompleter.complete();
-        }
-        close();
-        _clientStatus = _ClientStatus.closed;
-        return;
-      }
-      if (!this._retry || retryCount != -1) {
-        return _connectCompleter.future;
-      }
-      await for (var s in statusStream) {
-        if (s == Status.disconnected) {
-          break;
-        }
-        if (s == Status.closed) {
+    // Reset reconnection counter for new manual connection
+    _totalReconnectAttempts = 0;
+
+    for (var attemptCount = 0;
+        attemptCount == 0 || (attemptCount < retryCount && this._retry);
+        attemptCount++) {
+      try {
+        _connectLoop(
+          uri,
+          timeout: timeout,
+          retryInterval: retryInterval,
+          retryCount: 1, // Only one attempt per loop iteration
+        );
+
+        if (_clientStatus == _ClientStatus.closed || status == Status.closed) {
+          if (!_connectCompleter.isCompleted) {
+            _connectCompleter.complete();
+          }
+          close();
+          _clientStatus = _ClientStatus.closed;
           return;
         }
+
+        // Wait for the connection to complete or fail
+        await _connectCompleter.future;
+        return; // Success!
+
+      } catch (err) {
+        // Check if this is a recoverable error
+        if (err.toString().contains('Connection closed during handshake') &&
+            attemptCount < retryCount - 1 &&
+            this._retry) {
+          await Future.delayed(Duration(seconds: retryInterval));
+          continue;
+        } else {
+          // Unrecoverable error or no more retries
+          throw err;
+        }
       }
-    } while (this._retry && retryCount == -1);
-    return _connectCompleter.future;
+    }
+
+    // If we get here, all retry attempts failed
+    throw NatsException('Failed to connect after $retryCount attempts');
   }
 
   void _connectLoop(Uri uri,
       {int timeout = 5,
       required int retryInterval,
       required int retryCount}) async {
-    for (var count = 0;
-        count == 0 || ((count < retryCount || retryCount == -1) && this._retry);
-        count++) {
-      if (count == 0) {
-        _setStatus(Status.connecting);
-      } else {
-        _setStatus(Status.reconnecting);
-      }
+    _connectCompleter = Completer();
+    _setStatus(Status.connecting);
 
-      try {
-        if (_channelStream.isClosed) {
-          _channelStream = StreamController();
-        }
-        var sucess = await _connectUri(uri, timeout: timeout);
-        if (!sucess) {
-          await Future.delayed(Duration(seconds: retryInterval));
-          continue;
-        }
-
-        _buffer = [];
-
-        return;
-      } catch (err) {
-        await close();
-        if (!_connectCompleter.isCompleted) {
-          _connectCompleter.completeError(err);
-        }
-        _setStatus(Status.disconnected);
-      }
+    if (_channelStream.isClosed) {
+      _channelStream = StreamController();
     }
-    if (!_connectCompleter.isCompleted) {
-      _clientStatus = _ClientStatus.closed;
-      _connectCompleter
-          .completeError(NatsException('can not connect ${uri.toString()}'));
+
+    var success = await _connectUri(uri, timeout: timeout);
+    if (!success) {
+      if (!_connectCompleter.isCompleted) {
+        _connectCompleter.completeError(
+            NatsException('Failed to connect to ${uri.toString()}'));
+      }
+      return;
     }
+
+    _buffer = [];
   }
 
   Future<bool> _connectUri(Uri uri, {int timeout = 5}) async {
@@ -307,14 +325,18 @@ class Client {
             if (_channelStream.isClosed) return;
             _channelStream.add(event);
           }, onDone: () {
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(
+                  NatsException('Connection closed during handshake'));
             }
-            _setStatus(Status.disconnected);
+            _handleConnectionLoss();
           }, onError: (e) {
             print('WebSocket connection error: $e');
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(
+                  NatsException('Connection error during handshake: $e'));
             }
             close();
             wsErrorHandler(e);
@@ -340,14 +362,18 @@ class Client {
               _channelStream.add(event);
             }
           }, onDone: () {
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection closed during handshake'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(
+                  NatsException('Connection closed during handshake'));
             }
-            _setStatus(Status.disconnected);
+            _handleConnectionLoss();
           }, onError: (e) {
             print('TCP connection error: $e');
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(
+                  NatsException('Connection error during handshake: $e'));
             }
             _setStatus(Status.disconnected);
           });
@@ -368,14 +394,18 @@ class Client {
               _channelStream.add(event);
             }
           }, onDone: () {
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException(
+                  'Connection closed during handshake - likely authentication failure'));
             }
-            _setStatus(Status.disconnected);
+            _handleConnectionLoss();
           }, onError: (e) {
             print('TLS connection error: $e');
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(
+                  NatsException('Connection error during handshake: $e'));
             }
             _setStatus(Status.disconnected);
           });
@@ -483,7 +513,7 @@ class Client {
 
         await _sign();
         _addConnectOption(_connectOption);
-        
+
         if (_connectOption.verbose == true) {
           var ack = await _ackStream.stream.first;
           if (ack) {
@@ -495,7 +525,8 @@ class Client {
           // In non-verbose mode, wait up to authenticationTimeout for an error
           // If no error occurs, assume connection is successful
           try {
-            await _ackStream.stream.first.timeout(_connectOption.authenticationTimeout);
+            await _ackStream.stream.first
+                .timeout(_connectOption.authenticationTimeout);
             // If we get here, an error was received
             _setStatus(Status.disconnected);
           } on TimeoutException {
@@ -503,7 +534,7 @@ class Client {
             _setStatus(Status.connected);
           }
         }
-        
+
         _backendSubscriptAll();
         _flushPubBuffer();
         if (!_connectCompleter.isCompleted) {
@@ -524,7 +555,8 @@ class Client {
           if (!handled && lower.contains(subj.toLowerCase())) {
             var comp = _pendingSubCompleters[sid];
             if (comp != null && !comp.isCompleted) {
-              comp.completeError(NatsException('Permission Violation for Subscription: $data'));
+              comp.completeError(NatsException(
+                  'Permission Violation for Subscription: $data'));
             }
             _pendingSubCompleters.remove(sid);
             _pendingSubsSubjects.remove(sid);
@@ -537,8 +569,10 @@ class Client {
               lower.contains('authorization') ||
               lower.contains('permission')) {
             // If we're in handshake phase, fail the connect future
-            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
-              _connectCompleter.completeError(NatsException('Authentication failed: $data'));
+            if (status == Status.infoHandshake &&
+                !_connectCompleter.isCompleted) {
+              _connectCompleter
+                  .completeError(NatsException('Authentication failed: $data'));
               return;
             }
           }
@@ -682,7 +716,8 @@ class Client {
   ///publish by string
   Future<bool> pubString(String subject, String str,
       {String? replyTo, bool buffer = true, Header? header}) async {
-    return pub(subject, Uint8List.fromList(utf8.encode(str)), replyTo: replyTo, buffer: buffer);
+    return pub(subject, Uint8List.fromList(utf8.encode(str)),
+        replyTo: replyTo, buffer: buffer);
   }
 
   Future<bool> _pub(_Pub p) async {
@@ -807,9 +842,9 @@ class Client {
   }
 
   void _add(String str) {
-     if (status == Status.closed || status == Status.disconnected) {
+    if (status == Status.closed || status == Status.disconnected) {
       return;
-     }
+    }
     if (_wsChannel != null) {
       // if (_wsChannel?.closeCode == null) return;
       _wsChannel?.sink.add(utf8.encode(str + '\r\n'));
@@ -899,7 +934,8 @@ class Client {
       } else {
         _inboxSubPrefix = inboxPrefix;
       }
-  _inboxSub = await sub<T>(_inboxSubPrefix! + '.>', jsonDecoder: jsonDecoder);
+      _inboxSub =
+          await sub<T>(_inboxSubPrefix! + '.>', jsonDecoder: jsonDecoder);
     }
     var inbox = _inboxSubPrefix! + '.' + Nuid().next();
     var stream = _inboxSub!.stream;
@@ -954,11 +990,23 @@ class Client {
 
   ///close connection to NATS server unsub to server but still keep subscription list at client
   Future close() async {
+    // Stop any ongoing reconnection attempts
+    _isReconnecting = false;
+    _retry = false;
+
+    if (!_connectCompleter.isCompleted) {
+      _connectCompleter.complete();
+    }
     _setStatus(Status.closed);
     _backendSubs.forEach((_, s) => s = false);
     _inboxs.clear();
-    await _wsChannel?.sink.close();
-    _wsChannel = null;
+
+    // Close WebSocket with proper cleanup
+    if (_wsChannel != null) {
+      await _wsChannel!.sink.close();
+      _wsChannel = null;
+    }
+
     await _secureSocket?.close();
     _secureSocket = null;
     await _tcpSocket?.close();
@@ -967,10 +1015,17 @@ class Client {
     _inboxSub = null;
     _inboxSubPrefix = null;
     _buffer = [];
+
+    // Close the channel stream to ensure clean reconnection
+    if (!_channelStream.isClosed) {
+      await _channelStream.close();
+    }
+
     // Fail any pending subscription completers to avoid hanging futures
     _pendingSubCompleters.forEach((sid, comp) {
       if (!comp.isCompleted) {
-        comp.completeError(NatsException('Connection closed before subscription could be confirmed'));
+        comp.completeError(NatsException(
+            'Connection closed before subscription could be confirmed'));
       }
     });
     _pendingSubCompleters.clear();
@@ -999,6 +1054,90 @@ class Client {
   Future<void> tcpClose() async {
     await _tcpSocket?.close();
     _setStatus(Status.disconnected);
+  }
+
+  // Track current reconnection attempt
+  int _totalReconnectAttempts = 0;
+  bool _isReconnecting = false;
+
+  void _handleConnectionLoss() {
+    _setStatus(Status.disconnected);
+
+    // If retry is enabled and we're not being manually closed, start reconnection
+    if (_retry && _clientStatus != _ClientStatus.closed && _lastUri != null) {
+      _startAutoReconnect();
+    }
+  }
+
+  void _startAutoReconnect() async {
+    if (_lastUri == null || _clientStatus == _ClientStatus.closed) return;
+
+    // Check if we have exceeded retry attempts
+    if (_retryCount != -1 && _totalReconnectAttempts >= _retryCount) {
+      _setStatus(Status.disconnected);
+      return;
+    }
+
+    if (!_isReconnecting) {
+      _isReconnecting = true;
+      // Start reconnection in the background
+      unawaited(_reconnectLoop());
+    }
+  }
+
+  Future<void> _reconnectLoop() async {
+    while (_totalReconnectAttempts < _retryCount || _retryCount == -1) {
+      if (_clientStatus == _ClientStatus.closed || !_retry) {
+        _isReconnecting = false;
+        return; // Stop reconnecting if client was manually closed
+      }
+
+      _totalReconnectAttempts++;
+      _setStatus(Status.reconnecting);
+
+      try {
+        // Wait before retry attempt (except for first attempt)
+        if (_totalReconnectAttempts > 1) {
+          await Future.delayed(Duration(seconds: _retryInterval));
+        }
+
+        // Check again if we should stop
+        if (_clientStatus == _ClientStatus.closed || !_retry) {
+          _isReconnecting = false;
+          return;
+        }
+
+        // Attempt reconnection
+        _connectLoop(
+          _lastUri!,
+          timeout: _timeout,
+          retryInterval: _retryInterval,
+          retryCount: 1,
+        );
+
+        // Wait for connection to complete or fail
+        await _connectCompleter.future;
+
+        // If we get here, reconnection was successful
+        _isReconnecting = false;
+
+        // Don't reset reconnect attempts - if connection is lost again quickly,
+        // it still counts toward the total retry limit
+        return;
+      } catch (e) {
+        // Connection attempt failed, continue with next retry
+        if (_totalReconnectAttempts >= _retryCount && _retryCount != -1) {
+          // This was the last attempt, give up
+          _setStatus(Status.disconnected);
+          _isReconnecting = false;
+          return;
+        }
+      }
+    }
+
+    // Exhausted all retry attempts
+    _setStatus(Status.disconnected);
+    _isReconnecting = false;
   }
 
   /// wait until client connected

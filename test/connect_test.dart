@@ -11,7 +11,7 @@ void main() {
       var client = Client();
       unawaited(
           client.connect(Uri.parse('ws://localhost:8080'), retryInterval: 1));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       client.pub('subject1', Uint8List.fromList('message1'.codeUnits));
       var msg = await sub.stream.first;
       await client.close();
@@ -21,7 +21,7 @@ void main() {
       var client = Client();
       unawaited(
           client.connect(Uri.parse('nats://localhost:4222'), retryInterval: 1));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       client.pub('subject1', Uint8List.fromList('message1'.codeUnits));
       var msg = await sub.stream.first;
       await client.close();
@@ -30,7 +30,7 @@ void main() {
     test('await', () async {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost'));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -43,7 +43,7 @@ void main() {
     test('retry false', () async {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost'), retry: false);
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -56,7 +56,7 @@ void main() {
     test('reconnect', () async {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost'));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -85,7 +85,7 @@ void main() {
       ));
 
       await client.waitUntilConnected();
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -149,9 +149,13 @@ void main() {
         client.statusStream.listen((s) {
           print(s);
           statusHistory.add(s);
+          if (s == Status.connected) {
+            client.tcpClose();
+          }
         });
         await client.connect(
-          Uri.parse('nats://localhost:1234'),
+          Uri.parse('nats://localhost'),
+          connectOption: ConnectOption(verbose: true),
           retry: true,
           retryCount: 3,
           retryInterval: 1,
@@ -162,17 +166,15 @@ void main() {
       } on WebSocketChannelException {
         //
       } catch (e) {
-        //
+        print('catch $e');
       }
+
+      await Future.delayed(Duration(seconds: 10));
+
       await client.close();
 
-      // no runtime error should be fine
-      // expect only first and last status
-      expect(statusHistory.length, equals(4));
-      expect(statusHistory[0], equals(Status.connecting));
-      expect(statusHistory[1], equals(Status.reconnecting));
-      expect(statusHistory[2], equals(Status.reconnecting));
-      expect(statusHistory[3], equals(Status.closed));
+      expect(
+          statusHistory.where((s) => s == Status.connected).length, equals(4));
     });
   });
 }

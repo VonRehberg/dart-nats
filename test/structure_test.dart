@@ -14,7 +14,8 @@ void main() {
 
       await client.connect(Uri.parse('nats://localhost:4222'),
           retryInterval: 1);
-      var sub = client.sub<String>('subject1', jsonDecoder: string2string);
+      var sub =
+          await client.sub<String>('subject1', jsonDecoder: string2string);
       client.pub('subject1', Uint8List.fromList('message1'.codeUnits));
       var msg = await sub.stream.first;
       await client.close();
@@ -25,7 +26,8 @@ void main() {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost:4222'),
           retryInterval: 1);
-      var sub = client.sub<Student>('subject1', jsonDecoder: json2Student);
+      var sub =
+          await client.sub<Student>('subject1', jsonDecoder: json2Student);
       var student = Student('id', 'name', 1);
       client.pubString('subject1', jsonEncode(student.toJson()));
       var msg = await sub.stream.first;
@@ -39,7 +41,7 @@ void main() {
       await client.connect(Uri.parse('nats://localhost:4222'),
           retryInterval: 1);
       client.registerJsonDecoder<Student>(json2Student);
-      var sub = client.sub<Student>('subject1');
+      var sub = await client.sub<Student>('subject1');
       var student = Student('id', 'name', 1);
       client.pubString('subject1', jsonEncode(student.toJson()));
       var msg = await sub.stream.first;
@@ -52,7 +54,7 @@ void main() {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost:4222'),
           retryInterval: 1);
-      var sub = client.sub('subject1', jsonDecoder: json2Student);
+      var sub = await client.sub('subject1', jsonDecoder: json2Student);
       var student = Student('id', 'name', 1);
       client.pubString('subject1', jsonEncode(student.toJson()));
       var msg = await sub.stream.first;
@@ -65,7 +67,7 @@ void main() {
       var client = Client();
       await client.connect(Uri.parse('nats://localhost:4222'),
           retryInterval: 1);
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var student = Student('id', 'name', 1);
       client.pubString('subject1', jsonEncode(student.toJson()));
       var msg = await sub.stream.first;
@@ -78,7 +80,7 @@ void main() {
       var server = Client();
       await server.connect(Uri.parse('nats://localhost:4222'));
       server.registerJsonDecoder<Student>(json2Student);
-      var service = server.sub<Student>('service');
+      var service = await server.sub<Student>('service');
       unawaited(service.stream.first.then((m) {
         m.respondString(jsonEncode(m.data.toJson()));
       }));
@@ -97,7 +99,7 @@ void main() {
       var server = Client();
       server.registerJsonDecoder<Student>(json2Student);
       await server.connect(Uri.parse('nats://localhost:4222'));
-      var service = server.sub<Student>('service');
+      var service = await server.sub<Student>('service');
       unawaited(service.stream.first.then((m) {
         m.respondString(jsonEncode(m.data.toJson()));
       }));

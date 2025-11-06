@@ -11,7 +11,7 @@ void main() {
       var client = Client();
       await client.connect(Uri.parse('ws://localhost:8084'),
           connectOption: ConnectOption(authToken: 'mytoken'));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -25,7 +25,7 @@ void main() {
       var client = Client();
       await client.connect(Uri.parse('ws://localhost:8085'),
           connectOption: ConnectOption(user: 'foo', pass: 'bar'));
-      var sub = client.sub('subject1');
+      var sub = await client.sub('subject1');
       var result = await client.pub(
           'subject1', Uint8List.fromList('message1'.codeUnits),
           buffer: false);
@@ -47,7 +47,7 @@ void main() {
               'eyJ0eXAiOiJKV1QiLCJhbGciOiJlZDI1NTE5LW5rZXkifQ.eyJqdGkiOiJBU1pFQVNGMzdKS0dPTFZLTFdKT1hOM0xZUkpHNURJUFczUEpVT0s0WUlDNFFENlAyVFlRIiwiaWF0IjoxNjY0NTI0OTU5LCJpc3MiOiJBQUdTSkVXUlFTWFRDRkUzRVE3RzVPQldSVUhaVVlDSFdSM0dRVERGRldaSlM1Q1JLTUhOTjY3SyIsIm5hbWUiOiJzaWdudXAiLCJzdWIiOiJVQzZCUVY1Tlo1V0pQRUVZTTU0UkZBNU1VMk5NM0tON09WR01DU1VaV1dORUdZQVBNWEM0V0xZUCIsIm5hdHMiOnsicHViIjp7fSwic3ViIjp7fSwic3VicyI6LTEsImRhdGEiOi0xLCJwYXlsb2FkIjotMSwidHlwZSI6InVzZXIiLCJ2ZXJzaW9uIjoyfX0.8Q0HiN0h2tBvgpF2cAaz2E3WLPReKEnSmUWT43NSlXFNRpsCWpmkikxGgFn86JskEN4yast1uSj306JdOhyJBA',
         ),
       );
-      var sub = client.sub('subject.foo');
+      var sub = await client.sub('subject.foo');
       client.pubString('subject.foo', 'message1');
       var msg = await sub.stream.first;
       await client.close();
@@ -64,7 +64,7 @@ void main() {
           nkey: 'UDXU4RCSJNZOIQHZNWXHXORDPRTGNJAHAHFRGZNEEJCPQTT2M7NLCNF4',
         ),
       );
-      var sub = client.sub('subject.foo');
+      var sub = await client.sub('subject.foo');
       client.pubString('subject.foo', 'message1');
       var msg = await sub.stream.first;
       await client.close();

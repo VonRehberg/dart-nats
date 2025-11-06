@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:base32/base32.dart';
-import 'package:dart_nats/src/common.dart';
+import 'common.dart';
 import 'package:ed25519_edwards/ed25519_edwards.dart' as ed;
 
 /// PrefixByteSeed is the version byte used for encoded NATS Seeds

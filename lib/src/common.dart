@@ -165,9 +165,10 @@ class ConnectOption {
       this.authenticationTimeout = const Duration(seconds: 2)});
 
   ///constructure from json
-  ConnectOption.fromJson(Map<String, dynamic> json) 
+  ConnectOption.fromJson(Map<String, dynamic> json)
       : subConfirmTimeout = Duration(seconds: json['sub_confirm_timeout'] ?? 2),
-        authenticationTimeout = Duration(seconds: json['authentication_timeout'] ?? 2) {
+        authenticationTimeout =
+            Duration(seconds: json['authentication_timeout'] ?? 2) {
     verbose = json['verbose'];
     pedantic = json['pedantic'];
     tlsRequired = json['tls_required'];
