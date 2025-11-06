@@ -34,7 +34,7 @@ class Nuid {
     resetSequential();
   }
 
-  ///constructure
+  ///constructor
   Nuid() {
     randomizePrefix();
     resetSequential();

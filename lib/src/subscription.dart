@@ -21,7 +21,7 @@ class Subscription<T> {
   ///convert from json string to T for structure data
   T Function(String)? jsonDecoder;
 
-  ///constructure
+  ///constructor
   Subscription(this.sid, this.subject, this._client,
       {this.queueGroup, this.jsonDecoder}) {
     _controller = StreamController<Message<T>>();
@@ -36,7 +36,7 @@ class Subscription<T> {
   ///Stream output when server publish message
   Stream<Message<T>> get stream => _stream;
 
-  ///sink messat to listener
+  ///sink message to listener
   void add(Message raw) {
     if (_controller.isClosed) return;
     _controller.sink.add(Message<T>(

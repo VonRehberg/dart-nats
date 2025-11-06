@@ -9,7 +9,7 @@ Map<String, dynamic> _removeNull(Map<String, dynamic> data) {
 
 ///NATS Server Info
 class Info {
-  /// sever id
+  /// server id
   String? serverId;
 
   /// server name
@@ -36,19 +36,19 @@ class Info {
   /// max payload
   int? maxPayload;
 
-  /// nounce
+  /// nonce
   String? nonce;
 
   ///client id assigned by server
   int? clientId;
 
   //todo
-  //authen required
+  //authentication required
   //tls_required
   //tls_verify
   //connect_url
 
-  ///constructure
+  ///constructor
   Info(
       {this.serverId,
       this.serverName,
@@ -62,7 +62,7 @@ class Info {
       this.nonce,
       this.clientId});
 
-  ///constructure from json
+  ///constructor from json
   Info.fromJson(Map<String, dynamic> json) {
     serverId = json['server_id'];
     serverName = json['server_name'];
@@ -107,7 +107,7 @@ class ConnectOption {
   /// TLS require or not //not implement yet
   bool? tlsRequired;
 
-  /// Auehtnticatio Token
+  /// Authentication Token
   String? authToken;
 
   /// JWT
@@ -128,10 +128,10 @@ class ConnectOption {
   ///server name
   String? name;
 
-  /// lang??
+  /// language
   String? lang;
 
-  /// sever version
+  /// server version
   String? version;
 
   /// headers
@@ -146,7 +146,7 @@ class ConnectOption {
   /// Timeout for connection error during handshake
   Duration connectionErrorTimeout;
 
-  ///construcure
+  ///constructor
   ConnectOption(
       {this.verbose = false,
       this.pedantic,
@@ -164,9 +164,10 @@ class ConnectOption {
       this.subscriptionErrorTimeout = const Duration(seconds: 2),
       this.connectionErrorTimeout = const Duration(seconds: 2)});
 
-  ///constructure from json
+  ///constructor from json
   ConnectOption.fromJson(Map<String, dynamic> json)
-      : subscriptionErrorTimeout = Duration(seconds: json['subscription_error_timeout'] ?? 2),
+      : subscriptionErrorTimeout =
+            Duration(seconds: json['subscription_error_timeout'] ?? 2),
         connectionErrorTimeout =
             Duration(seconds: json['connection_error_timeout'] ?? 2) {
     verbose = json['verbose'];

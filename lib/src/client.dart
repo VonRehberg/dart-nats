@@ -159,10 +159,10 @@ class Client {
 
   ///NATS Client Constructor
   Client() {
-    _steamHandle();
+    _streamHandle();
   }
 
-  void _steamHandle() {
+  void _streamHandle() {
     _channelStream.stream.listen((d) {
       _buffer.addAll(d);
       // org code
@@ -226,7 +226,7 @@ class Client {
     if (_clientStatus == _ClientStatus.closed) {
       // Ensure channel stream is recreated for fresh connection
       _channelStream = StreamController();
-      _steamHandle();
+      _streamHandle();
       // Reset any connection-related state
       _buffer = [];
       _pendingSubCompleters.clear();
@@ -478,7 +478,7 @@ class Client {
     }
   }
 
-  void _backendSubscriptAll() {
+  void _backendSubscribeAll() {
     _backendSubs.clear();
     _subs.forEach((sid, s) async {
       _sub(s.subject, sid, queueGroup: s.queueGroup);
@@ -594,7 +594,7 @@ class Client {
           }
         }
 
-        _backendSubscriptAll();
+        _backendSubscribeAll();
         _flushPubBuffer();
         if (!_connectCompleter.isCompleted) {
           _connectCompleter.complete();
@@ -728,7 +728,7 @@ class Client {
   ///default buffer action for pub
   var defaultPubBuffer = true;
 
-  ///publish by byte (Uint8List) return true if sucess sending or buffering
+  ///publish by byte (Uint8List) return true if success sending or buffering
   ///return false if not connect
   Future<bool> pub(String? subject, Uint8List data,
       {String? replyTo, bool? buffer, Header? header}) async {
@@ -859,7 +859,7 @@ class Client {
     }
 
     // If not connected yet, register locally; server subscription will be
-    // sent when connection is established by _backendSubscriptAll
+    // sent when connection is established by _backendSubscribeAll
     _subs[sid] = s;
     return s;
   }
@@ -1092,7 +1092,7 @@ class Client {
     _clientStatus = _ClientStatus.closed;
   }
 
-  /// discontinue tcpConnect. use connect(uri) instead
+  /// deprecated tcpConnect. use connect(uri) instead
   ///Backward compatible with 0.2.x version
   Future tcpConnect(String host,
       {int port = 4222,
@@ -1158,7 +1158,7 @@ class Client {
     await waitUntil(Status.connected);
   }
 
-  /// wait untril status
+  /// wait until status
   Future<void> waitUntil(Status s) async {
     if (status == s) {
       return;

@@ -142,7 +142,7 @@ client.connect(Uri.parse('nats://localhost'),
           connectOption: ConnectOption(authToken: 'mytoken'));
 ```
 
-User/Passwore Authentication
+User/Password Authentication
 ```dart
 var client = Client();
 client.connect(Uri.parse('nats://localhost'),
