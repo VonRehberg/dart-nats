@@ -1,3 +1,21 @@
+## 1.0.0 - Major Release
+
+### 💥 Breaking Changes
+* **Blocking Connection Behavior**: `connect()` method will block until connection is established or fails with permission errors
+* **Permission Error Detection**: `connect()`, `sub()`, and `pub()` methods now throw exceptions immediately when permission errors are detected from server
+* **Introduced new ConnectOption Parameters**: 
+  - `subscriptionErrorTimeout`
+  - `connectionErrorTimeout`
+
+### 🚀 New Features  
+* **Enhanced Error Handling**: Real-time detection of permission violations during connection, subscription, and publishing
+* **Configurable Error Timeouts**: New timeout parameters allow fine-tuning how long to wait for server error responses in non-verbose mode
+* **Automatic Reconnection**: Robust automatic reconnection when server closes established connections
+* **Improved Connection Reliability**: Better connection state management and retry logic
+
+### ⚠️ Migration Required
+This is a major version with breaking changes to connection and subscription behavior. See migration guide in README.md.
+
 ## 0.6.5
 * Issue resolved when app is in background. Thanks nileshsoni97 for contribution.
 
