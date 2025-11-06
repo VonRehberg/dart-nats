@@ -158,7 +158,7 @@ class ConnectOption {
       this.tlsRequired,
       this.name,
       this.lang = 'dart',
-      this.version = '0.6.0',
+      this.version = '1.0.0',
       this.headers = true,
       this.protocol = 1,
       this.subscriptionErrorTimeout = const Duration(seconds: 2),
