@@ -239,86 +239,134 @@ class Client {
     // Reset reconnection counter for new manual connection
     _totalReconnectAttempts = 0;
 
-    for (var attemptCount = 0;
-        attemptCount == 0 || (attemptCount < retryCount && this._retry);
-        attemptCount++) {
-      try {
-        _connectLoop(
-          uri,
-          timeout: timeout,
-          retryInterval: retryInterval,
-          retryCount: 1, // Only one attempt per loop iteration
-        );
+    // Use the unified connection method with manual connection settings
+    return await _attemptConnection(
+      uri: uri,
+      maxAttempts: retryCount,
+      isManualConnection: true,
+    );
+  }
 
-        if (_clientStatus == _ClientStatus.closed || status == Status.closed) {
-          if (!_connectCompleter.isCompleted) {
-            _connectCompleter.complete();
-          }
-          close();
-          _clientStatus = _ClientStatus.closed;
+  /// Unified connection method that handles both initial connections and reconnections
+  Future<void> _attemptConnection({
+    required Uri uri,
+    required int maxAttempts,
+    required bool isManualConnection,
+  }) async {
+    for (var attempt = 0;
+        attempt < maxAttempts || maxAttempts == -1;
+        attempt++) {
+      if (_clientStatus == _ClientStatus.closed && !_retry) {
+        if (isManualConnection) {
+          throw NatsException('Connection cancelled');
+        } else {
+          _isReconnecting = false;
           return;
         }
+      }
 
-        // Wait for the connection to complete or fail
-        await _connectCompleter.future;
-        return; // Success!
+      // Set appropriate status
+      if (isManualConnection && attempt == 0) {
+        _setStatus(Status.connecting);
+      } else if (!isManualConnection) {
+        _setStatus(Status.reconnecting);
+      } else {
+        _setStatus(Status.connecting);
+      }
 
+      try {
+        // Wait before retry attempt (except for first manual connection attempt)
+        if (attempt > 0 ||
+            (!isManualConnection && _totalReconnectAttempts > 1)) {
+          await Future.delayed(Duration(seconds: _retryInterval));
+        }
+
+        // Check again if we should stop
+        if (_clientStatus == _ClientStatus.closed && !_retry) {
+          if (isManualConnection) {
+            throw NatsException('Connection cancelled');
+          } else {
+            _isReconnecting = false;
+            return;
+          }
+        }
+
+        // Track reconnection attempts for automatic reconnections
+        if (!isManualConnection) {
+          _totalReconnectAttempts++;
+        }
+
+        // Perform the actual connection
+        await _connectUri(uri, timeout: _timeout);
+
+        // Connection successful
+        if (!isManualConnection) {
+          _isReconnecting = false;
+        }
+        return;
       } catch (err) {
-        // Check if this is a recoverable error
-        if (err.toString().contains('Connection closed during handshake') &&
-            attemptCount < retryCount - 1 &&
-            this._retry) {
-          await Future.delayed(Duration(seconds: retryInterval));
-          continue;
+        // Handle connection failures
+        bool shouldRetry = false;
+
+        if (isManualConnection) {
+          // For manual connections, retry on handshake errors
+          shouldRetry =
+              err.toString().contains('Connection closed during handshake') &&
+                  attempt < maxAttempts - 1 &&
+                  this._retry;
         } else {
-          // Unrecoverable error or no more retries
-          throw err;
+          // For automatic reconnections, retry unless we've exhausted attempts
+          shouldRetry =
+              (_totalReconnectAttempts < _retryCount || _retryCount == -1) &&
+                  this._retry &&
+                  _clientStatus != _ClientStatus.closed;
+        }
+
+        if (!shouldRetry) {
+          if (isManualConnection) {
+            throw err;
+          } else {
+            _setStatus(Status.disconnected);
+            _isReconnecting = false;
+            return;
+          }
         }
       }
     }
 
-    // If we get here, all retry attempts failed
-    throw NatsException('Failed to connect after $retryCount attempts');
+    // If we get here, all attempts failed
+    if (isManualConnection) {
+      throw NatsException('Failed to connect after $maxAttempts attempts');
+    } else {
+      _setStatus(Status.disconnected);
+      _isReconnecting = false;
+    }
   }
 
-  void _connectLoop(Uri uri,
-      {int timeout = 5,
-      required int retryInterval,
-      required int retryCount}) async {
+  Future<void> _connectUri(Uri uri, {int timeout = 5}) async {
     _connectCompleter = Completer();
-    _setStatus(Status.connecting);
 
     if (_channelStream.isClosed) {
       _channelStream = StreamController();
     }
 
-    var success = await _connectUri(uri, timeout: timeout);
-    if (!success) {
-      if (!_connectCompleter.isCompleted) {
-        _connectCompleter.completeError(
-            NatsException('Failed to connect to ${uri.toString()}'));
-      }
-      return;
-    }
-
-    _buffer = [];
-  }
-
-  Future<bool> _connectUri(Uri uri, {int timeout = 5}) async {
     try {
       if (uri.scheme == '') {
-        throw Exception(NatsException('No scheme in uri'));
+        throw NatsException('No scheme in uri');
       }
+
       switch (uri.scheme) {
         case 'wss':
         case 'ws':
           try {
             _wsChannel = WebSocketChannel.connect(uri);
           } catch (e) {
-            return false;
+            throw NatsException(
+                'Failed to connect WebSocket to ${uri.toString()}: $e');
           }
           if (_wsChannel == null) {
-            return false;
+            throw NatsException(
+                'Failed to create WebSocket connection to ${uri.toString()}');
           }
           _setStatus(Status.infoHandshake);
           _wsChannel?.stream.listen((event) {
@@ -341,7 +389,8 @@ class Client {
             close();
             wsErrorHandler(e);
           });
-          return true;
+          break;
+
         case 'nats':
           var port = uri.port;
           if (port == 0) {
@@ -353,7 +402,8 @@ class Client {
             timeout: Duration(seconds: timeout),
           );
           if (_tcpSocket == null) {
-            return false;
+            throw NatsException(
+                'Failed to connect TCP socket to ${uri.toString()}');
           }
           _setStatus(Status.infoHandshake);
           _tcpSocket!.listen((event) {
@@ -377,7 +427,8 @@ class Client {
             }
             _setStatus(Status.disconnected);
           });
-          return true;
+          break;
+
         case 'tls':
           _tlsRequired = true;
           var port = uri.port;
@@ -386,7 +437,10 @@ class Client {
           }
           _tcpSocket = await Socket.connect(uri.host, port,
               timeout: Duration(seconds: timeout));
-          if (_tcpSocket == null) break;
+          if (_tcpSocket == null) {
+            throw NatsException(
+                'Failed to connect TLS socket to ${uri.toString()}');
+          }
           _setStatus(Status.infoHandshake);
           _tcpSocket!.listen((event) {
             if (_secureSocket == null) {
@@ -409,14 +463,19 @@ class Client {
             }
             _setStatus(Status.disconnected);
           });
-          return true;
+          break;
+
         default:
-          throw Exception(NatsException('schema ${uri.scheme} not support'));
+          throw NatsException('schema ${uri.scheme} not support');
       }
+
+      _buffer = [];
+
+      // Wait for the connection to complete (INFO message processed)
+      await _connectCompleter.future;
     } catch (e) {
-      return false;
+      throw NatsException('Failed to connect to ${uri.toString()}: $e');
     }
-    return false;
   }
 
   void _backendSubscriptAll() {
@@ -1086,58 +1145,12 @@ class Client {
   }
 
   Future<void> _reconnectLoop() async {
-    while (_totalReconnectAttempts < _retryCount || _retryCount == -1) {
-      if (_clientStatus == _ClientStatus.closed || !_retry) {
-        _isReconnecting = false;
-        return; // Stop reconnecting if client was manually closed
-      }
-
-      _totalReconnectAttempts++;
-      _setStatus(Status.reconnecting);
-
-      try {
-        // Wait before retry attempt (except for first attempt)
-        if (_totalReconnectAttempts > 1) {
-          await Future.delayed(Duration(seconds: _retryInterval));
-        }
-
-        // Check again if we should stop
-        if (_clientStatus == _ClientStatus.closed || !_retry) {
-          _isReconnecting = false;
-          return;
-        }
-
-        // Attempt reconnection
-        _connectLoop(
-          _lastUri!,
-          timeout: _timeout,
-          retryInterval: _retryInterval,
-          retryCount: 1,
-        );
-
-        // Wait for connection to complete or fail
-        await _connectCompleter.future;
-
-        // If we get here, reconnection was successful
-        _isReconnecting = false;
-
-        // Don't reset reconnect attempts - if connection is lost again quickly,
-        // it still counts toward the total retry limit
-        return;
-      } catch (e) {
-        // Connection attempt failed, continue with next retry
-        if (_totalReconnectAttempts >= _retryCount && _retryCount != -1) {
-          // This was the last attempt, give up
-          _setStatus(Status.disconnected);
-          _isReconnecting = false;
-          return;
-        }
-      }
-    }
-
-    // Exhausted all retry attempts
-    _setStatus(Status.disconnected);
-    _isReconnecting = false;
+    // Use the unified connection method for automatic reconnections
+    await _attemptConnection(
+      uri: _lastUri!,
+      maxAttempts: _retryCount,
+      isManualConnection: false,
+    );
   }
 
   /// wait until client connected
