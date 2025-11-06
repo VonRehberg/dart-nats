@@ -307,8 +307,16 @@ class Client {
             if (_channelStream.isClosed) return;
             _channelStream.add(event);
           }, onDone: () {
+            print('WebSocket connection closed by server (possibly auth failure)');
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
+            }
             _setStatus(Status.disconnected);
           }, onError: (e) {
+            print('WebSocket connection error: $e');
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            }
             close();
             wsErrorHandler(e);
           });
@@ -332,7 +340,16 @@ class Client {
               if (_channelStream.isClosed) return;
               _channelStream.add(event);
             }
-          }).onDone(() {
+          }, onDone: () {
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection closed during handshake'));
+            }
+            _setStatus(Status.disconnected);
+          }, onError: (e) {
+            print('TCP connection error: $e');
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            }
             _setStatus(Status.disconnected);
           });
           return true;
@@ -351,6 +368,18 @@ class Client {
               if (_channelStream.isClosed) return;
               _channelStream.add(event);
             }
+          }, onDone: () {
+            print('TLS connection closed by server (possibly auth failure)');
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection closed during handshake - likely authentication failure'));
+            }
+            _setStatus(Status.disconnected);
+          }, onError: (e) {
+            print('TLS connection error: $e');
+            if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+              _connectCompleter.completeError(NatsException('Connection error during handshake: $e'));
+            }
+            _setStatus(Status.disconnected);
           });
           return true;
         default:
@@ -456,6 +485,7 @@ class Client {
 
         await _sign();
         _addConnectOption(_connectOption);
+        
         if (_connectOption.verbose == true) {
           var ack = await _ackStream.stream.first;
           if (ack) {
@@ -464,8 +494,18 @@ class Client {
             _setStatus(Status.disconnected);
           }
         } else {
-          _setStatus(Status.connected);
+          // In non-verbose mode, wait up to 5 seconds for an error
+          // If no error occurs, assume connection is successful
+          try {
+            await _ackStream.stream.first.timeout(Duration(seconds: 5));
+            // If we get here, an error was received
+            _setStatus(Status.disconnected);
+          } on TimeoutException {
+            // No error received within 5 seconds, assume success
+            _setStatus(Status.connected);
+          }
         }
+        
         _backendSubscriptAll();
         _flushPubBuffer();
         if (!_connectCompleter.isCompleted) {
@@ -478,7 +518,15 @@ class Client {
         }
         break;
       case '-err':
-        // _processErr(data);
+        if (data.toLowerCase().contains('auth') || 
+            data.toLowerCase().contains('authorization') ||
+            data.toLowerCase().contains('permission')) {
+          // If we're in handshake phase, fail the connect future
+          if (status == Status.infoHandshake && !_connectCompleter.isCompleted) {
+            _connectCompleter.completeError(NatsException('Authentication failed: $data'));
+            return;
+          }
+        }
         if (_connectOption.verbose == true) {
           _ackStream.sink.add(false);
         }
@@ -487,6 +535,7 @@ class Client {
         _pingCompleter.complete();
         break;
       case '+ok':
+        print('server +OK');
         //do nothing
         if (_connectOption.verbose == true) {
           _ackStream.sink.add(true);
