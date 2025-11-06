@@ -140,11 +140,11 @@ class ConnectOption {
   ///protocol
   int? protocol;
 
-  /// Timeout for subscription confirmation (waiting for server -ERR response)
-  Duration subConfirmTimeout;
+  /// Timeout for subscription error response (waiting for server -ERR response)
+  Duration subscriptionErrorTimeout;
 
-  /// Timeout for authentication during handshake
-  Duration authenticationTimeout;
+  /// Timeout for connection error during handshake
+  Duration connectionErrorTimeout;
 
   ///construcure
   ConnectOption(
@@ -161,14 +161,14 @@ class ConnectOption {
       this.version = '0.6.0',
       this.headers = true,
       this.protocol = 1,
-      this.subConfirmTimeout = const Duration(seconds: 2),
-      this.authenticationTimeout = const Duration(seconds: 2)});
+      this.subscriptionErrorTimeout = const Duration(seconds: 2),
+      this.connectionErrorTimeout = const Duration(seconds: 2)});
 
   ///constructure from json
   ConnectOption.fromJson(Map<String, dynamic> json)
-      : subConfirmTimeout = Duration(seconds: json['sub_confirm_timeout'] ?? 2),
-        authenticationTimeout =
-            Duration(seconds: json['authentication_timeout'] ?? 2) {
+      : subscriptionErrorTimeout = Duration(seconds: json['subscription_error_timeout'] ?? 2),
+        connectionErrorTimeout =
+            Duration(seconds: json['connection_error_timeout'] ?? 2) {
     verbose = json['verbose'];
     pedantic = json['pedantic'];
     tlsRequired = json['tls_required'];

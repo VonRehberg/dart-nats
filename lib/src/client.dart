@@ -581,11 +581,11 @@ class Client {
             _setStatus(Status.disconnected);
           }
         } else {
-          // In non-verbose mode, wait up to authenticationTimeout for an error
+          // In non-verbose mode, wait up to connectionErrorTimeout for an error
           // If no error occurs, assume connection is successful
           try {
             await _ackStream.stream.first
-                .timeout(_connectOption.authenticationTimeout);
+                .timeout(_connectOption.connectionErrorTimeout);
             // If we get here, an error was received
             _setStatus(Status.disconnected);
           } on TimeoutException {
@@ -839,7 +839,7 @@ class Client {
 
       try {
         // Wait briefly for a possible -ERR from server regarding permissions
-        await comp.future.timeout(_connectOption.subConfirmTimeout);
+        await comp.future.timeout(_connectOption.subscriptionErrorTimeout);
         // completed successfully (shouldn't happen normally), treat as accepted
       } on TimeoutException {
         // No error observed within timeout — assume subscription accepted
