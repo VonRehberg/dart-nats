@@ -8,6 +8,10 @@ String newInbox({String inboxPrefix = '_INBOX', bool secure = true}) {
   if (secure) {
     _nuid = Nuid();
   }
+  // Ensure proper dot separator for standard NATS inbox format
+  if (inboxPrefix == '_INBOX') {
+    return inboxPrefix + '.' + _nuid.next();
+  }
   return inboxPrefix + _nuid.next();
 }
 

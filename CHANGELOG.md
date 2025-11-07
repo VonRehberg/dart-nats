@@ -12,6 +12,26 @@
 * **Configurable Error Timeouts**: New timeout parameters allow fine-tuning how long to wait for server error responses in non-verbose mode
 * **Automatic Reconnection**: Robust automatic reconnection when server closes established connections
 * **Improved Connection Reliability**: Better connection state management and retry logic
+* **🚀 JetStream Support**: Complete implementation of NATS JetStream for message persistence
+  - Stream management (create, delete, configure streams)
+  - Consumer management (durable and ephemeral consumers)  
+  - Publishing with acknowledgments and delivery guarantees
+  - Pull and push subscription patterns
+  - Message acknowledgment handling (ack, nak, term, in-progress)
+  - Exactly-once delivery with deduplication
+  - Message replay from specific sequence or time
+  - Work queue patterns with competing consumers
+  - Comprehensive stream and consumer information APIs
+
+### 🔮 JETSTREAM FEATURES
+- ✅ Stream and Consumer Management
+- ✅ Message Persistence with Acknowledgments
+- ✅ Pull and Push Subscription Patterns  
+- ✅ Exactly-Once Delivery Guarantees
+- ✅ Message Replay and Time-Travel
+- ✅ Work Queue Patterns
+- 🔄 Key-Value Store (Planned)
+- 🔄 Object Store (Planned)
 
 ### ⚠️ Migration Required
 This is a major version with breaking changes to connection and subscription behavior. See migration guide in README.md.

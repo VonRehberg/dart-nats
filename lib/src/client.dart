@@ -8,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'common.dart';
 import 'inbox.dart';
+import 'jetstream_context.dart';
 import 'message.dart';
 import 'nkeys.dart';
 import 'subscription.dart';
@@ -1168,5 +1169,41 @@ class Client {
         break;
       }
     }
+  }
+
+  /// Create a JetStream context for advanced messaging features
+  ///
+  /// JetStream provides message persistence, delivery guarantees, and advanced features
+  /// like message replay, consumer groups, and key-value stores.
+  ///
+  /// Example usage:
+  /// ```dart
+  /// final js = client.jetStream();
+  ///
+  /// // Create a stream
+  /// await js.addStream(StreamConfig(
+  ///   name: 'mystream',
+  ///   subjects: ['events.>'],
+  ///   retention: RetentionPolicy.limits,
+  ///   storage: StorageType.file,
+  /// ));
+  ///
+  /// // Publish with acknowledgment
+  /// final ack = await js.publishString('events.user.created', 'user data');
+  ///
+  /// // Subscribe with delivery guarantees
+  /// final sub = await js.pullSubscribe('events.>');
+  /// await sub.start();
+  /// await for (final msg in sub.stream) {
+  ///   print('Received: ${msg.string}');
+  ///   await msg.ack();
+  /// }
+  /// ```
+  JetStreamContext jetStream({
+    String apiPrefix = '\$JS.API',
+    Duration requestTimeout = const Duration(seconds: 5),
+  }) {
+    return JetStreamContext.from(this,
+        apiPrefix: apiPrefix, requestTimeout: requestTimeout);
   }
 }

@@ -33,7 +33,7 @@ services:
       - "8084:8080"
     volumes:
       - ./test/config:/config
-    command: "-V -D -c /config/websocket.cfg --auth mytoken"
+    command: "-V -D -c /config/websocket_noauth.cfg --auth mytoken"
 
   nats-user:
     image: nats
@@ -42,7 +42,7 @@ services:
       - "8085:8080"
     volumes:
       - ./test/config:/config
-    command: "-V -D -c /config/websocket.cfg --user foo --pass bar"
+    command: "-V -D -c /config/websocket_noauth.cfg --user foo --pass bar"
 
   nats-nkey:
     image: nats
@@ -61,4 +61,23 @@ services:
     volumes:
       - ./test/config:/config
     command: "-V -D -c /config/wss.cfg --tls --tlscert=/config/server-cert.pem --tlskey=/config/server-key.pem"
+
+  nats-jetstream:
+    image: nats:latest
+    ports:
+      - "4228:4222"  # NATS protocol
+      - "8087:8080"  # WebSocket
+      - "8222:8222"  # Monitoring/HTTP API
+    volumes:
+      - ./test/config:/config
+      - jetstream_data:/tmp/nats/jetstream
+    command: "-c /config/jetstream.cfg"
+    healthcheck:
+      test: ["CMD", "nats", "server", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  jetstream_data:
 

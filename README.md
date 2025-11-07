@@ -303,7 +303,317 @@ The following is a list of features currently supported:
 - [x] - Buffering message during reconnect atempts
 - [x] - All authentication models, including NATS 2.0 JWT and nkey
 - [x] - NATS 2.x 
-- [x] - TLS 
+- [x] - TLS
+- [x] - JetStream (message persistence, delivery guarantees)
 
 Planned:
 - [ ] - Connect to list of servers
+- [ ] - Key-Value Store (JetStream KV)
+- [ ] - Object Store (JetStream Object Store)
+
+## JetStream Support
+
+**JetStream** provides message persistence, delivery guarantees, and advanced messaging patterns beyond basic pub/sub. Perfect for reliable event sourcing, message replay, and at-least-once delivery guarantees.
+
+### Quick Start with JetStream
+
+```dart
+import 'package:dart_nats/dart_nats.dart';
+
+void main() async {
+  var client = Client();
+  await client.connect(Uri.parse('nats://localhost:4222'));
+  
+  // Create JetStream context
+  var js = client.jetStream();
+  
+  // Create a stream for events
+  await js.addStream(StreamConfig(
+    name: 'EVENTS',
+    subjects: ['events.>'],
+    retention: RetentionPolicy.limits,
+    storage: StorageType.file,
+    maxAge: Duration(hours: 24),
+  ));
+  
+  // Publish with acknowledgment guarantee
+  var ack = await js.publishString('events.user.login', '{"userId": 123}');
+  print('Message stored at sequence: ${ack.seq}');
+  
+  // Create consumer with delivery guarantees
+  await js.addConsumer('EVENTS', ConsumerConfig(
+    name: 'user-events-processor',
+    deliverPolicy: DeliverPolicy.all,
+    ackPolicy: AckPolicy.explicit,
+  ));
+  
+  // Subscribe and process messages reliably
+  var sub = await js.pullSubscribe('events.>', consumerName: 'user-events-processor');
+  await sub.start();
+  
+  await for (var msg in sub.stream) {
+    try {
+      // Process message
+      print('Processing: ${msg.string}');
+      
+      // Acknowledge successful processing
+      await msg.ack();
+    } catch (e) {
+      // Negative acknowledge for redelivery
+      await msg.nak();
+    }
+  }
+}
+```
+
+### Core JetStream Features
+
+#### 1. Stream Management
+Create persistent streams that store messages:
+
+```dart
+// Basic stream
+await js.addStream(StreamConfig(
+  name: 'ORDERS', 
+  subjects: ['orders.>'],
+));
+
+// Stream with retention and limits
+await js.addStream(StreamConfig(
+  name: 'USER_EVENTS',
+  subjects: ['users.created', 'users.updated'],
+  retention: RetentionPolicy.limits,
+  storage: StorageType.file,
+  maxAge: Duration(days: 7),
+  maxBytes: 100 * 1024 * 1024, // 100MB
+  maxMsgs: 10000,
+  replicas: 1,
+));
+
+// Work queue (messages deleted after acknowledgment)
+await js.addStream(StreamConfig(
+  name: 'WORK_QUEUE',
+  subjects: ['jobs.>'],
+  retention: RetentionPolicy.workQueue,
+  storage: StorageType.memory,
+));
+```
+
+#### 2. Publishing with Guarantees
+Publish messages with delivery confirmation:
+
+```dart
+// Simple publish with acknowledgment
+var ack = await js.publishString('orders.created', jsonEncode(order));
+print('Stored at sequence: ${ack.seq}, stream: ${ack.stream}');
+
+// Publish with deduplication
+var ack = await js.publishString(
+  'orders.created',
+  jsonEncode(order),
+  messageId: 'order-${order.id}', // Prevents duplicates
+);
+
+// Publish with expected stream state
+var ack = await js.publishString(
+  'orders.updated',
+  jsonEncode(order),
+  expectedLastSeq: 41, // Only accept if last sequence is 41
+);
+```
+
+#### 3. Consumer Patterns
+
+**Durable Consumers** (survive restarts):
+```dart
+await js.addConsumer('EVENTS', ConsumerConfig(
+  name: 'analytics-processor',
+  durableName: 'analytics-processor',
+  deliverPolicy: DeliverPolicy.all,
+  ackPolicy: AckPolicy.explicit,
+  filterSubject: 'events.analytics.>',
+));
+```
+
+**Ephemeral Consumers** (temporary):
+```dart
+await js.addConsumer('EVENTS', ConsumerConfig(
+  deliverPolicy: DeliverPolicy.new_, // Only new messages
+  ackPolicy: AckPolicy.explicit,
+  filterSubject: 'events.user.>',
+));
+```
+
+**Work Queue Consumers** (competing consumers):
+```dart
+await js.addConsumer('WORK_QUEUE', ConsumerConfig(
+  name: 'job-worker',
+  ackPolicy: AckPolicy.explicit,
+  maxDeliver: 3, // Retry failed jobs 3 times
+  ackWait: Duration(seconds: 30), // 30s to process
+));
+```
+
+#### 4. Subscription Patterns
+
+**Pull-Based Subscriptions** (recommended):
+```dart
+var sub = await js.pullSubscribe('events.>', consumerName: 'my-consumer');
+await sub.start();
+
+await for (var msg in sub.stream) {
+  // Process at your own pace
+  await processEvent(msg.string);
+  await msg.ack();
+}
+```
+
+**Push-Based Subscriptions**:
+```dart
+var sub = await js.pushSubscribe(
+  'events.user.>',
+  deliverSubject: 'deliver.user.events', // Custom delivery subject
+);
+await sub.start();
+
+sub.stream.listen((msg) async {
+  await processUserEvent(msg.string);
+  await msg.ack();
+});
+```
+
+#### 5. Message Acknowledgment
+
+```dart
+await for (var msg in subscription.stream) {
+  try {
+    // Successful processing
+    await processMessage(msg.string);
+    await msg.ack(); // Acknowledge success
+    
+  } catch (RetryableError e) {
+    // Temporary failure - retry later
+    await msg.nak(); // Negative acknowledge for redelivery
+    
+  } catch (PermanentError e) {
+    // Permanent failure - don't retry
+    await msg.term(); // Terminate (won't redeliver)
+    
+  } catch (SlowProcessing e) {
+    // Need more time
+    await msg.inProgress(); // Extend ack deadline
+  }
+}
+```
+
+#### 6. Stream Information
+
+```dart
+// List all streams
+var streams = await js.listStreams();
+print('Available streams: ${streams.join(", ")}');
+
+// Get stream details
+var info = await js.getStreamInfo('EVENTS');
+print('Messages in stream: ${info.state.messages}');
+print('Stream size: ${info.state.bytes} bytes');
+print('Active consumers: ${info.state.consumers}');
+
+// Consumer information
+var consumerInfo = await js.getConsumerInfo('EVENTS', 'my-consumer');
+print('Pending messages: ${consumerInfo.numPending}');
+print('Delivered count: ${consumerInfo.delivered.streamSeq}');
+```
+
+### Advanced Patterns
+
+#### Message Replay from Specific Point
+```dart
+// Replay from sequence number
+await js.addConsumer('EVENTS', ConsumerConfig(
+  name: 'audit-replay',
+  deliverPolicy: DeliverPolicy.byStartSequence,
+  optStartSeq: 1000, // Start from message 1000
+  ackPolicy: AckPolicy.none, // Read-only replay
+));
+
+// Replay from timestamp
+await js.addConsumer('EVENTS', ConsumerConfig(
+  name: 'time-replay',
+  deliverPolicy: DeliverPolicy.byStartTime,
+  optStartTime: DateTime.now().subtract(Duration(hours: 2)),
+));
+```
+
+#### Exactly-Once Processing with Deduplication
+```dart
+// Stream with deduplication window
+await js.addStream(StreamConfig(
+  name: 'PAYMENTS',
+  subjects: ['payments.>'],
+  duplicateWindow: Duration(minutes: 5), // 5-minute dedup window
+));
+
+// Publish with unique message ID
+for (var payment in payments) {
+  var ack = await js.publishString(
+    'payments.processed',
+    jsonEncode(payment),
+    messageId: 'payment-${payment.id}', // Deduplication key
+  );
+  
+  if (ack.duplicate) {
+    print('Payment ${payment.id} was already processed');
+  } else {
+    print('Payment ${payment.id} recorded at sequence ${ack.seq}');
+  }
+}
+```
+
+#### Stream Cleanup
+```dart
+// Delete consumer
+await js.deleteConsumer('EVENTS', 'old-consumer');
+
+// Delete stream (WARNING: removes all messages)
+await js.deleteStream('TEMP_STREAM');
+```
+
+### JetStream Configuration Options
+
+#### Stream Storage Types:
+- **`StorageType.file`**: Persistent disk storage
+- **`StorageType.memory`**: In-memory (faster, not persistent)
+
+#### Retention Policies:
+- **`RetentionPolicy.limits`**: Keep until limits exceeded
+- **`RetentionPolicy.interest`**: Keep until all consumers acknowledge
+- **`RetentionPolicy.workQueue`**: Delete after acknowledgment
+
+#### Delivery Policies:
+- **`DeliverPolicy.all`**: Deliver all messages in stream
+- **`DeliverPolicy.last`**: Start with last message per subject
+- **`DeliverPolicy.new_`**: Only new messages
+- **`DeliverPolicy.byStartSequence`**: Start from specific sequence
+- **`DeliverPolicy.byStartTime`**: Start from specific time
+
+#### Acknowledgment Policies:
+- **`AckPolicy.none`**: No acknowledgment required
+- **`AckPolicy.all`**: Acknowledge processing of message
+- **`AckPolicy.explicit`**: Must explicitly ack each message
+
+### Error Handling
+
+```dart
+try {
+  await js.addStream(config);
+} on JetStreamException catch (e) {
+  if (e.code == 10058) {
+    print('Stream name already in use');
+  } else {
+    print('JetStream error: ${e.message}');
+  }
+}
+```
+
+For complete examples, see `example/jetstream_example.dart`.
